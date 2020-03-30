@@ -1,7 +1,7 @@
-###########################################
-## CODE TO PERFORM ENDICOTT ANALYSIS     ##
-## CREATED BY RACHEL NETHERY             ##
-###########################################
+############################################################################
+## CODE TO PERFORM ENDICOTT SENSITIVITY ANALYSIS WITH PRIOR VARIANCE=1    ##
+## CREATED BY RACHEL NETHERY                                              ##
+############################################################################
 
 #####################
 ## data management ##
@@ -39,8 +39,8 @@ controldat<-controldat[which(controldat$Rural==0),]
 controldat<-controldat[-which(floor(controldat$ID/10000000)==36007),]
 
 ## make dataset for input into the matching function ##
-matchin<-data.frame(rbind(eedat[,c(33:35,38:41)],
-                          controldat[,c(7:9,12:15)]))
+matchin<-data.frame(rbind(eedat[,c(28,31,33:35,38:42)],
+                          controldat[,c(2,5,7:9,12:16)]))
 
 matchin$E<-c(rep(1,nrow(eedat)),rep(0,nrow(controldat)))
 rownames(matchin)<-1:nrow(matchin)
@@ -49,25 +49,35 @@ for (M in c(3,5)){
   for (metho in c("mahalanobis","logit","GAMlogit")){
     
     ## run matching procedure ##
-    matchout<-matchit(E~P65Plus+PMale+PWhite+Unemploy+
-                        Commute+Income+Industry,
+    matchout<-matchit(E~MoneyFood+
+                        MoneySmoke+
+                        P65Plus+PMale+PWhite+Unemploy+
+                        Commute+Income+Industry+Exercise,
                       data=matchin,method='nearest',ratio=M,distance=metho,replace=F)
     
     ## output balance info ##
     temptab<-cbind(summary(matchout,standardize=T)[[3]][,4],summary(matchout,standardize=T)[[4]][,4])
     rownames(temptab)<-rownames(summary(matchout,standardize=T)[[3]])
     colnames(temptab)<-c("Before","After")
-    write.csv(temptab,file=paste0('balance_',M,'_',metho,'_v2.csv'))
+    write.csv(temptab,file=paste0('balance_',M,'_',metho,'_sa1.csv'))
     
     ## construct matched dataset ##
     matchdat<-match.data(matchout)
     matchdat<-matchdat[,-c(ncol(matchdat)-1,ncol(matchdat))]
     controlind<-as.numeric(row.names(matchdat))[(nrow(eedat)+1):nrow(matchdat)]-nrow(eedat)
-    controlid<-controldat$ID[controlind]
-    matchdat$ID<-c(eedat$dohregion,controlid)
-    matchdat$Pop<-c(eedat$Pop,controldat$Pop[controlind])
-    matchdat$Kidney<-c(eedat$observed_Kidney,rep(NA,nrow(matchdat)-nrow(eedat)))
-    matchdat$Bladder<-c(eedat$observed_Bladder,rep(NA,nrow(matchdat)-nrow(eedat)))
+    
+    ## ids of control units ##
+    controlid_all<-controldat$ID[controlind]
+    
+    ## separate control units within NY (where we havee CBG data) and outside NY (where we only have county data) ##
+    controlid_ny<-controlid_all[which(floor(controlid_all/10000000000)==36)]
+    controlid<-controlid_all[-which(floor(controlid_all/10000000000)==36)]
+    
+    ## add proper identifiers, population size, and outcome data (where available) into the matched dataset ##
+    matchdat$ID<-c(eedat$dohregion,ny2010$dohregion[match(controlid_ny,ny2010$geoid)],controlid)
+    matchdat$Pop<-c(eedat$Pop,ny2010$Pop[match(controlid_ny,ny2010$geoid)],controldat$Pop[match(controlid,controldat$ID)])
+    matchdat$Kidney<-c(eedat$observed_Kidney,ny2010$observed_Kidney[match(controlid_ny,ny2010$geoid)],rep(NA,length(controlid)))
+    matchdat$Bladder<-c(eedat$observed_Bladder,ny2010$observed_Bladder[match(controlid_ny,ny2010$geoid)],rep(NA,length(controlid)))
     
     ##########################################
     ## cancer predictions for matched areas ##
@@ -125,15 +135,20 @@ for (M in c(3,5)){
         Ypred<-rbind(Ypred,cbg_pred)
       }
       
-      ## add the endicott outcome data to the predictions ##
-      temp<-matrix(rep(eedat[[paste0('observed_',ctype)]],nrow(ps_beta)),nrow=nrow(eedat),ncol=ncol(Ypred),byrow=F)
-      rownames(temp)<-eedat$dohregion
+      ## add the NY outcome data to the predictions ##
+      temp<-matrix(rep(matchdat[[ctype]][1:(nrow(eedat)+length(controlid_ny))],nrow(ps_beta)),
+                   nrow=nrow(eedat)+length(controlid_ny),ncol=ncol(Ypred),byrow=F)
+      rownames(temp)<-matchdat$ID[1:(nrow(eedat)+length(controlid_ny))]
+      
       ## make sure ordering is the same in outcome and predictor data ##
       Ypred<-Ypred[order(as.numeric(rownames(Ypred))),]
       Ypred<-rbind(temp,Ypred)
-      temp<-matchdat[(nrow(eedat)+1):nrow(matchdat),]
+      ## write the prediction info to an external dataset ##
+      predsum<-data.frame(apply(Ypred,1,mean),apply(Ypred,1,quantile,.025),apply(Ypred,1,quantile,.975))
+      write.csv(predsum, file=paste0(ctype,'_predsum_',M,'_',metho,'_sa1.csv'),row.names=F)
+      temp<-matchdat[(nrow(eedat)+length(controlid_ny)+1):nrow(matchdat),]
       temp<-temp[order(as.numeric(temp$ID)),]
-      matchdat[(nrow(eedat)+1):nrow(matchdat),]<-temp
+      matchdat[(nrow(eedat)+length(controlid_ny)+1):nrow(matchdat),]<-temp
       
       #####################################################
       ## fit the poisson regression to estimate the cSIR ##
@@ -149,12 +164,12 @@ for (M in c(3,5)){
       while(accept<.2 | accept>.4){
         if (accept<.2) tuneparam<-tuneparam-.001
         if (accept>.4) tuneparam<-tuneparam+.001
-        fit_ctype<-est_poisson(X=X_est,Y_all=Ypred,offs=matchdat$Pop,tau=tuneparam,pburn=.75,C=C)
+        fit_ctype<-est_poisson(X=X_est,Y_all=Ypred,offs=matchdat$Pop,tau=tuneparam,pburn=.75,C=C,priorvar=1)
         accept<-fit_ctype[['acceptance']]
       }
       
       ## output traceplots ##
-      pdf(paste0(ctype,'_traceplots_',M,'_',metho,'_v2.pdf'),width=12)
+      pdf(paste0(ctype,'_traceplots_',M,'_',metho,'_sa1.pdf'),width=12)
       par(mfrow=c(2,6))
       for (i in 1:ncol(fit_ctype[['beta_postsamp']])){
         traceplot(mcmc(fit_ctype[['beta_postsamp']][,i]))
@@ -163,7 +178,7 @@ for (M in c(3,5)){
       
       ## output results ##
       if (M==3 & metho=="mahalanobis"){
-        sink(paste0(ctype,'_results_v2.txt'))
+        sink(paste0(ctype,'_results_sa1.txt'))
         cat('\n')
         cat("=============================\n")
         cat('M=',M,', Method=',metho,'\n')
@@ -175,7 +190,7 @@ for (M in c(3,5)){
         cat('\n')
         sink()
       } else{
-        sink(paste0(ctype,'_results_v2.txt'),append=T)
+        sink(paste0(ctype,'_results_sa1.txt'),append=T)
         cat('\n')
         cat("=============================\n")
         cat('M=',M,', Method=',metho,'\n')

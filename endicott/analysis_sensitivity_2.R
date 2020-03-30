@@ -1,7 +1,7 @@
-################################################
-## CODE TO PERFORM MAIN ENDICOTT ANALYSIS     ##
-## CREATED BY RACHEL NETHERY                  ##
-################################################
+###############################################################################################
+## CODE TO PERFORM ENDICOTT SENSITIVITY ANALYSIS OMITTING MONEYFOOD, MONEYSMOKE, EXERCISE    ##
+## CREATED BY RACHEL NETHERY                                                                 ##
+###############################################################################################
 
 #####################
 ## data management ##
@@ -39,8 +39,8 @@ controldat<-controldat[which(controldat$Rural==0),]
 controldat<-controldat[-which(floor(controldat$ID/10000000)==36007),]
 
 ## make dataset for input into the matching function ##
-matchin<-data.frame(rbind(eedat[,c(28,31,33:35,38:42)],
-                          controldat[,c(2,5,7:9,12:16)]))
+matchin<-data.frame(rbind(eedat[,c(33:35,38:41)],
+                          controldat[,c(7:9,12:15)]))
 
 matchin$E<-c(rep(1,nrow(eedat)),rep(0,nrow(controldat)))
 rownames(matchin)<-1:nrow(matchin)
@@ -49,17 +49,15 @@ for (M in c(3,5)){
   for (metho in c("mahalanobis","logit","GAMlogit")){
     
     ## run matching procedure ##
-    matchout<-matchit(E~MoneyFood+
-                        MoneySmoke+
-                        P65Plus+PMale+PWhite+Unemploy+
-                        Commute+Income+Industry+Exercise,
+    matchout<-matchit(E~P65Plus+PMale+PWhite+Unemploy+
+                        Commute+Income+Industry,
                       data=matchin,method='nearest',ratio=M,distance=metho,replace=F)
     
     ## output balance info ##
     temptab<-cbind(summary(matchout,standardize=T)[[3]][,4],summary(matchout,standardize=T)[[4]][,4])
     rownames(temptab)<-rownames(summary(matchout,standardize=T)[[3]])
     colnames(temptab)<-c("Before","After")
-    write.csv(temptab,file=paste0('balance_',M,'_',metho,'_main.csv'))
+    write.csv(temptab,file=paste0('balance_',M,'_',metho,'_sa2.csv'))
     
     ## construct matched dataset ##
     matchdat<-match.data(matchout)
@@ -145,7 +143,7 @@ for (M in c(3,5)){
       Ypred<-rbind(temp,Ypred)
       ## write the prediction info to an external dataset ##
       predsum<-data.frame(apply(Ypred,1,mean),apply(Ypred,1,quantile,.025),apply(Ypred,1,quantile,.975))
-      write.csv(predsum, file=paste0(ctype,'_predsum_',M,'_',metho,'_main.csv'),row.names=F)
+      write.csv(predsum, file=paste0(ctype,'_predsum_',M,'_',metho,'_sa2.csv'),row.names=F)
       temp<-matchdat[(nrow(eedat)+length(controlid_ny)+1):nrow(matchdat),]
       temp<-temp[order(as.numeric(temp$ID)),]
       matchdat[(nrow(eedat)+length(controlid_ny)+1):nrow(matchdat),]<-temp
@@ -169,7 +167,7 @@ for (M in c(3,5)){
       }
       
       ## output traceplots ##
-      pdf(paste0(ctype,'_traceplots_',M,'_',metho,'_main.pdf'),width=12)
+      pdf(paste0(ctype,'_traceplots_',M,'_',metho,'_sa2.pdf'),width=12)
       par(mfrow=c(2,6))
       for (i in 1:ncol(fit_ctype[['beta_postsamp']])){
         traceplot(mcmc(fit_ctype[['beta_postsamp']][,i]))
@@ -178,7 +176,7 @@ for (M in c(3,5)){
       
       ## output results ##
       if (M==3 & metho=="mahalanobis"){
-        sink(paste0(ctype,'_results_main.txt'))
+        sink(paste0(ctype,'_results_sa2.txt'))
         cat('\n')
         cat("=============================\n")
         cat('M=',M,', Method=',metho,'\n')
@@ -190,7 +188,7 @@ for (M in c(3,5)){
         cat('\n')
         sink()
       } else{
-        sink(paste0(ctype,'_results_main.txt'),append=T)
+        sink(paste0(ctype,'_results_sa2.txt'),append=T)
         cat('\n')
         cat("=============================\n")
         cat('M=',M,', Method=',metho,'\n')
